@@ -1,0 +1,33 @@
+# BudgetGuard TechOps Dependencies
+
+# Encryption for secure credential storage
+cryptography>=41.0.0
+
+# AWS SDK
+boto3>=1.28.0
+
+# Azure SDK
+azure-identity>=1.14.0
+azure-mgmt-containerinstance>=10.0.0  # Keep for backward compatibility during migration
+azure-mgmt-containerservice>=27.0.0  # For AKS cluster management
+azure-mgmt-resource>=23.0.0
+# Kubernetes Python client for AKS deployments
+kubernetes>=28.1.0
+
+# Google Cloud SDK
+google-cloud-compute>=1.14.0
+google-cloud-container>=2.21.0
+google-cloud-billing>=1.11.0
+
+# GUI Framework (tkinter comes with Python, but we'll use it)
+# For future: Could upgrade to PyQt6 or customtkinter for better UI
+
+# Configuration management
+pyyaml>=6.0
+
+# Local deployment (Docker)
+# Note: Docker must be installed separately
+
+# Logging
+colorlog>=6.8.0
+
