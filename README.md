@@ -1,6 +1,6 @@
 # BudgetGuard TechOps
 
-Python application for automating NIM deployment across multiple cloud providers (AWS, Azure, GCP) for VFX studios.
+Python application for automating NIM deployment across multiple cloud providers (AWS, Azure, GCP) for VFX studios. **Supports the BudgetGuard custom node in ComfyUI** by deploying and managing cloud infrastructure for multi-provider cost optimization.
 
 ## ⚠️ Pre-Alpha Disclaimer
 
@@ -17,29 +17,43 @@ Python application for automating NIM deployment across multiple cloud providers
 
 ## Overview
 
-BudgetGuard TechOps is a Python-based deployment automation tool that enables TechOps teams to automatically deploy NVIDIA NIM instances to AWS, Azure, and GCP. This provides the infrastructure foundation that BudgetGuard Artists uses for cost-optimized multi-provider routing.
+BudgetGuard TechOps is a Python-based deployment automation tool that enables TechOps teams to automatically deploy NVIDIA NIM instances to AWS, Azure, and GCP. This provides the infrastructure foundation that **BudgetGuard Artists (ComfyUI custom node)** uses for cost-optimized multi-provider routing.
+
+**Purpose**: This tool deploys and manages cloud infrastructure that the BudgetGuard node in ComfyUI connects to, enabling artists to seamlessly switch between cloud providers and optimize costs directly within their ComfyUI workflows.
+
+**Related Project**: This is the backend deployment tool. For the ComfyUI custom node that artists use, see **[BudgetGuard Artists](https://github.com/ajcampbell1333/BudgetGuard_Artists)**.
 
 **Platform Support**: Python runs on both Windows and Linux, so this application supports both platforms.
 
 ## Features
 
+### ComfyUI Integration
+- **Deploy infrastructure** that the BudgetGuard ComfyUI node connects to
+- **Install credentials** directly into ComfyUI's backend configuration
+- **Export endpoint URLs** for automatic discovery by BudgetGuard nodes
+- **Studio-wide deployment** with per-workstation credential installation
+- Seamless integration with ComfyUI workflows - artists never see deployment complexity
+
 ### Automated NIM Deployment
 - Deploy NIM instances to AWS, Azure, and GCP with a single command
-- Configure deployment settings per provider (region, instance type, etc.)
+- Configure deployment settings per provider (region, instance type, GPU tier, etc.)
 - Retrieve endpoint URLs for deployed instances
 - Manage multiple NIM deployments across providers
+- **All deployments are accessible to BudgetGuard nodes in ComfyUI**
 
 ### Multi-Provider Support
 - AWS deployment via AWS SDK (boto3)
 - Azure deployment via Azure SDK
 - GCP deployment via Google Cloud SDK
 - NVIDIA-hosted deployment support
+- **Multi-provider deployments enable cost comparison in ComfyUI**
 
 ### Endpoint Management
 - Track deployed NIM endpoints per provider
-- Export endpoint configuration for BudgetGuard Artists
+- Export endpoint configuration for [BudgetGuard Artists](https://github.com/ajcampbell1333/BudgetGuard_Artists) (ComfyUI)
 - Validate endpoint connectivity
 - Monitor deployment status
+- **Automatic endpoint discovery by BudgetGuard ComfyUI nodes**
 
 ## Architecture
 
@@ -50,8 +64,17 @@ BudgetGuard TechOps is a Python-based deployment automation tool that enables Te
                                       ↓
                     [Deployed NIM Instances]
                                       ↓
-                    [Endpoint URLs] → [BudgetGuard Artists]
+                    [Endpoint URLs] → [ComfyUI Backend Config]
+                                      ↓
+                    [BudgetGuard ComfyUI Node] → [Artist Workflows]
 ```
+
+**Integration Flow:**
+1. **TechOps** uses BudgetGuard TechOps to deploy NIM instances to cloud providers
+2. **Endpoints** are saved and exported to ComfyUI backend configuration
+3. **Credentials** are installed into ComfyUI's backend config (encrypted)
+4. **Artists** use BudgetGuard custom node in ComfyUI to access deployed instances
+5. **BudgetGuard node** automatically discovers endpoints and routes requests to selected providers
 
 ## Technical Implementation
 
@@ -166,10 +189,10 @@ BudgetGuard TechOps is a Python-based deployment automation tool that enables Te
 - Artists never see credential input fields - they only see a status message
 
 **What Artists See:**
-- **Green status**: "✓ Server Credentials Found" - Everything is configured, ready to use
+- **Green status**: "✓ Server Credentials Found" - Everything is configured, ready to use in ComfyUI
 - **Yellow status**: "⚠ Server Credentials Not Found - call your TechOps technician" - Needs TechOps setup
 
-**No Manual Credential Entry**: Artists never enter credentials manually. All credential management is handled by TechOps via the install-credentials command.
+**No Manual Credential Entry**: Artists never enter credentials manually in ComfyUI. All credential management is handled by TechOps via the `install-credentials` command, which writes directly to ComfyUI's backend configuration.
 
 **Security**: 
 - Credentials are encrypted in ComfyUI backend config file
@@ -245,23 +268,29 @@ TechOps exports endpoint configuration in a format that BudgetGuard Artists can 
 
 ## Technical Implementation Details
 
-### ComfyUI Node Integration (Artists Side)
+### ComfyUI Integration (BudgetGuard Node)
+
+**BudgetGuard ComfyUI Node Architecture:**
 
 **Python Backend (Node Logic):**
-- Custom nodes are defined as Python classes inheriting from ComfyUI's base node classes
-- Node execution logic runs in Python
-- Graph traversal and node operations use Python APIs
+- BudgetGuard is a ComfyUI custom node (Python class inheriting from ComfyUI's base node classes)
+- Node execution logic runs in Python within ComfyUI's execution engine
+- Graph traversal and node operations use ComfyUI's Python APIs
 - Cost calculation and API integrations are implemented in Python
+- **Reads credentials from ComfyUI backend config file** (`ComfyUI/budgetguard/budgetguard_backend_config.json`)
+- **Routes requests to endpoints deployed by BudgetGuard TechOps**
 
 **JavaScript Frontend (UI):**
 - ComfyUI runs as a web application with a JavaScript frontend
-- Custom UI elements/widgets can be created with JavaScript/HTML/CSS
-- Node inputs/outputs are rendered automatically based on Python node definitions
-- Enum inputs create dropdown menus automatically in the UI
+- BudgetGuard GUI is a JavaScript extension that integrates with ComfyUI's UI
+- Custom draggable control panel appears when BudgetGuard nodes are in the graph
+- Node inputs/outputs are rendered automatically by ComfyUI based on Python node definitions
+- Provider and GPU tier dropdowns are created automatically from Python enum inputs
 
-**BudgetGuard Node Implementation:**
-- **Python**: Node class definition, cost calculation logic, API integrations, graph traversal
-- **JavaScript**: Custom GUI window component, node placement detection, draggable interface
+**Integration Points:**
+- **TechOps → ComfyUI**: Credentials and endpoints written to ComfyUI backend config
+- **ComfyUI → BudgetGuard Node**: Node reads config on startup
+- **BudgetGuard Node → Cloud**: Routes requests to deployed endpoints based on provider selection
 - **Communication**: WebSocket or ComfyUI's built-in message passing between frontend and backend
 
 **Artists GUI (BudgetGuard Control Panel):**
@@ -696,28 +725,32 @@ python budgetguard_techops.py install-package \
 
 **Note:** Local install packages are created once on TechOps machine, then distributed to each workstation. No remote access required.
 
-#### Install Credentials to ComfyUI (Per-Workstation)
+#### Install Credentials to ComfyUI (Per-Workstation) - Required for BudgetGuard Node
 
 **Studio-Wide Shared Credentials:**
 ```bash
+# Install credentials into ComfyUI (required for BudgetGuard node to work)
 python budgetguard_techops.py install-credentials --comfyui-path "C:\ComfyUI" --studio-wide
 ```
 
 **Per-Workstation Credentials (for cost tracking):**
 ```bash
+# Install credentials into ComfyUI for specific workstation
 python budgetguard_techops.py install-credentials --comfyui-path "C:\ComfyUI" --workstation "artist-workstation-01"
 ```
 
 This command:
-- Writes credentials (NVIDIA NIM, AWS, Azure, GCP) to ComfyUI backend config file
+- **Writes credentials (NVIDIA NIM, AWS, Azure, GCP) to ComfyUI backend config file** (`ComfyUI/budgetguard/budgetguard_backend_config.json`)
   - **Studio-wide**: Same credentials for all workstations
   - **Per-workstation**: Separate credentials per workstation (for cost tracking)
-- Writes endpoint URLs for all deployed NIM instances to config
+- **Writes endpoint URLs for all deployed NIM instances to config**
   - **Same endpoint URLs for all workstations** (from studio-wide deployment)
+  - **BudgetGuard ComfyUI node automatically discovers these endpoints**
 - Encrypts credentials before writing to config
-- BudgetGuard Artists reads from config and stores in localStorage on first load
+- **BudgetGuard ComfyUI node (Python) reads config on startup**
+- BudgetGuard GUI (JavaScript) reads from config and stores in localStorage on first load
 - Artists see "✓ Server Credentials Found" status in BudgetGuard GUI after ComfyUI restarts
-- **No manual setup required** - artists just use BudgetGuard nodes
+- **No manual setup required in ComfyUI** - artists just use BudgetGuard nodes
 
 **Important Notes:**
 - **Cloud containers**: Deployed once (studio-wide), shared across all workstations
@@ -725,11 +758,12 @@ This command:
 - **Credentials**: Installed per-workstation (either shared or separate, depending on studio needs)
 - **Repeat**: Run `install-credentials` on each workstation separately
 
-**Technical Implementation:**
-- TechOps Python tool writes to ComfyUI backend config (server-side)
-- BudgetGuard Artists (JavaScript) reads config on startup and populates localStorage
+**Technical Implementation (ComfyUI Integration):**
+- **TechOps Python tool writes to ComfyUI backend config** (`ComfyUI/budgetguard/budgetguard_backend_config.json`) - server-side
+- **BudgetGuard ComfyUI node (Python) reads config on startup** - server-side (within ComfyUI)
+- **BudgetGuard GUI (JavaScript) reads from localStorage** - client-side (populated from backend config)
 - Credentials are encrypted in both config file and localStorage
-- This bridges the gap between Python (TechOps) and JavaScript (browser localStorage)
+- **Seamless integration** - BudgetGuard node automatically discovers endpoints and credentials without artist intervention
 
 **For Small Studios Without TechOps:**
 - Artists can run this command themselves
