@@ -470,30 +470,59 @@ TechOps exports endpoint configuration in a format that BudgetGuard Artists can 
 **Note**: GKE automatically handles NVIDIA device plugin installation for GPU node pools, so no manual verification is needed (unlike Azure AKS).
 
 ### Phase 5: Endpoint Management & Artist Handoff (In Progress)
-- [x] Implement endpoint export functionality
-- [x] Add endpoint validation
-- [x] Create configuration file format for BudgetGuard Artists
-- [ ] Add endpoint monitoring and health checks
-- [ ] Implement ComfyUI credential installation tool (`install-credentials` command)
-  - Inject credentials into ComfyUI's localStorage (encrypted)
-  - Inject endpoint URLs for all deployed instances
-  - Validate credentials before installation
-  - Support workstation-specific installation
-- [ ] Implement local install package creation (`create-install-package` command)
-  - Pull Docker images for selected NIM nodes
-  - Export images using `docker save` → tar files
-  - Create Docker Compose YAML files for each node
-  - Create installation script
-  - Package everything into ZIP file
-- [ ] Implement local install package installation (`install-package` command)
-  - Extract ZIP on target workstation
-  - Load Docker images using `docker load`
-  - Create Docker Compose configuration in `~/.budgetguard_local/`
-  - Optionally start containers (or leave stopped)
-  - Report success/failure
-- [ ] Update GUI "Create Local Install Package Only" mode to generate install packages instead of deploying directly
-- [ ] Add endpoint URL sharing/export features
-- [ ] Implement credential status detection in Artists GUI (check localStorage for credentials)
+- [x] Implement endpoint export functionality (`export.py` - supports `--config` and `--credentials`)
+- [x] Add endpoint validation (`validate_endpoints.py`)
+- [x] Create configuration file format for BudgetGuard Artists (`ARTISTS_CONFIG_FORMAT.md`)
+- [ ] Add endpoint monitoring and health checks (enhanced validation with health checks)
+- [x] Implement ComfyUI credential installation tool (`install-credentials` command) ✅ COMPLETE
+  - [x] Inject endpoint URLs for all deployed instances
+  - [x] Validate credentials before installation
+  - [x] Support workstation-specific installation (`--workstation` flag)
+  - [x] Support studio-wide installation (`--studio-wide` flag)
+  - [x] Support file-based input (`--endpoints` and `--credentials` files)
+  - [x] Support ConfigManager input (`--from-config-manager` for TechOps machine)
+  - [x] Non-interactive mode for automation (`--non-interactive`)
+  - [x] **✅ COMPLETE**: Implement proper credential encryption using Fernet (studio-wide key)
+    - Uses PBKDF2 key derivation with fixed salt for studio-wide compatibility
+    - Supports custom studio key via `--studio-key` argument
+    - All workstations use same key to decrypt (default key for development, custom for production)
+  - **Note**: Credentials are written to ComfyUI backend config file (not localStorage - that's Artists' responsibility)
+- [x] Implement local install package creation (`create-install-package` command) ✅ COMPLETE
+  - [x] Pull Docker images for selected NIM nodes
+  - [x] Export images using `docker save` → tar files
+  - [x] Create Docker Compose YAML files for each node
+  - [x] Create installation script (`install.py`) for loading images and starting containers
+  - [x] Package everything into ZIP file (images, compose files, install script, manifest, README)
+  - **Usage**: `python budgetguard_techops.py create-install-package --nodes "FLUX Dev,FLUX Canny" --output ./install-package.zip`
+- [x] Implement local install package installation (`install-package` command) ✅ COMPLETE
+  - [x] Extract ZIP on target workstation
+  - [x] Load Docker images using `docker load` (via install.py script)
+  - [x] Create Docker Compose configuration in `~/.budgetguard_local/`
+  - [x] Containers always left stopped (artists control via GUI)
+  - [x] Report success/failure
+  - **Usage**: `python budgetguard_techops.py install-package --package ./install-package.zip`
+- [x] Update GUI "Create Local Install Package Only" mode to generate install packages instead of deploying directly ✅ COMPLETE
+  - [x] GUI now calls `create-install-package` command when "Create Local Install Package Only" is checked
+  - [x] Prompts user for output ZIP file location
+  - [x] Creates install package in background thread
+  - [x] Shows success message with installation instructions
+- [x] Add endpoint URL sharing/export features ✅ COMPLETE
+  - [x] Enhanced endpoint display with formatted grouping by node type
+  - [x] "Share Endpoints" button - copies formatted endpoints to clipboard
+  - [x] "Export Artists Config" button - exports in BudgetGuard Artists config format
+  - [x] Improved endpoint display showing provider, GPU tier, and URLs
+  - [x] Raw JSON display for technical users
+- [ ] **TechOps Tool**: Add workstation credential audit tool (`check-credentials` or `audit-workstations` command)
+  - Check which workstations have credentials installed (ping remote workstations)
+  - Verify credential validity on remote workstations
+  - **Check what local NIM nodes are currently installed** on each workstation (from local install packages)
+  - Report installation status across all workstations (credentials + local nodes)
+  - Generate audit report showing:
+    - Workstation ID
+    - Credential installation status (installed/not installed)
+    - Local node installations (which NIM nodes are installed locally)
+    - Local container status (running/stopped) if applicable
+  - Useful for TechOps to track deployment progress and troubleshoot issues
 
 ### Phase 6: Multi-Provider Deployment
 - [ ] Implement batch deployment across all providers
@@ -681,10 +710,29 @@ python budgetguard_techops.py deploy --nodes "FLUX Dev,FLUX Canny" --providers a
 python budgetguard_techops.py deploy --all --all-providers
 ```
 
-#### Export Endpoints
+#### Export Endpoints and Credentials
+
+Export files for workstation installation (see [Install Credentials](#install-credentials-to-comfyui-per-workstation---required-for-budgetguard-node) for deployment scenarios):
+
 ```bash
-python budgetguard_techops.py export --output endpoints.json
+# Export both endpoints and credentials (for all deployment scenarios)
+python tools/export.py --config --credentials --out-dir ./exports
+
+# Export only endpoints + credential status (safe to share, no secrets)
+python tools/export.py --config --out endpoints.json
+
+# Export only credentials (contains secrets, TechOps use only)
+python tools/export.py --credentials --out credentials.json
 ```
+
+**Output Files:**
+- `budgetguard_artists_config.json`: Endpoints + credential status (no secrets, safe to share)
+- `budgetguard_credentials.json`: Actual credentials (contains secrets, keep secure)
+
+**Use Cases:**
+- **Small studios**: Export to network drive, artists copy and install
+- **Mid-sized studios**: Export to local directory, TechOps copies via RDP/SSH
+- **Large studios**: Export to automation tool's file server, distributed automatically
 
 #### Create Local Install Package
 ```bash
@@ -712,31 +760,297 @@ python budgetguard_techops.py create-install-package \
 ```bash
 # On each artist workstation
 python budgetguard_techops.py install-package \
-  --package ./budgetguard-local-package.zip \
-  --start-containers false  # Leave stopped (artists control via GUI)
+  --package ./budgetguard-local-package.zip
 ```
 
 **What It Does:**
-- Extracts ZIP file
+- Extracts ZIP file to temporary directory
+- Runs installation script (`install.py`) from package
 - Loads Docker images using `docker load`
 - Creates Docker Compose configuration in `~/.budgetguard_local/`
-- Optionally starts containers (or leaves stopped)
+- **Containers are always left stopped** (artists control via BudgetGuard GUI)
 - Reports success/failure
 
 **Note:** Local install packages are created once on TechOps machine, then distributed to each workstation. No remote access required.
 
 #### Install Credentials to ComfyUI (Per-Workstation) - Required for BudgetGuard Node
 
-**Studio-Wide Shared Credentials:**
-```bash
-# Install credentials into ComfyUI (required for BudgetGuard node to work)
-python budgetguard_techops.py install-credentials --comfyui-path "C:\ComfyUI" --studio-wide
+BudgetGuard supports three deployment scenarios to accommodate studios of all sizes:
+
+##### Scenario 1: Small Studios (File Share / Network Drive)
+
+**Best for:** Studios with 1-10 workstations, simple network setup
+
+**Workflow:**
+1. **TechOps exports files** (on TechOps machine):
+   ```bash
+   python tools/export.py --config --credentials --out-dir ./network-share/budgetguard
+   ```
+   This creates:
+   - `budgetguard_artists_config.json` (endpoints + credential status, safe to share)
+   - `budgetguard_credentials.json` (actual credentials, keep secure)
+
+2. **TechOps copies files to network drive** (accessible by all workstations)
+
+3. **On each workstation** (artist or TechOps can do this):
+   ```bash
+   # Copy files from network drive to workstation
+   # Then run installation:
+   python tools/install_credentials.py \
+     --comfyui-path "C:\ComfyUI" \
+     --endpoints "\\network-share\budgetguard\budgetguard_artists_config.json" \
+     --credentials "\\network-share\budgetguard\budgetguard_credentials.json" \
+     --studio-wide
+   ```
+
+**Advantages:**
+- Simple setup, no remote access needed
+- Artists can install themselves if TechOps provides instructions
+- Works with basic network file sharing
+
+---
+
+##### Scenario 2: Mid-Sized Studios (RDP/SSH Remote Access)
+
+**Best for:** Studios with 10-50 workstations, TechOps team with remote access
+
+**Workflow:**
+1. **TechOps exports files** (on TechOps machine):
+   ```bash
+   python tools/export.py --config --credentials --out-dir ./exports
+   ```
+
+2. **TechOps RDPs/SSHs to each workstation**:
+   - Copy exported files to workstation (via RDP file transfer, SCP, or network share)
+   - Run installation command on workstation
+
+3. **On each workstation** (via RDP/SSH):
+   ```bash
+   # Studio-wide shared credentials:
+   python tools/install_credentials.py \
+     --comfyui-path "C:\ComfyUI" \
+     --endpoints exports/budgetguard_artists_config.json \
+     --credentials exports/budgetguard_credentials.json \
+     --studio-wide
+
+   # OR per-workstation credentials (for cost tracking):
+   python tools/install_credentials.py \
+     --comfyui-path "C:\ComfyUI" \
+     --endpoints exports/budgetguard_artists_config.json \
+     --credentials exports/workstation-01-credentials.json \
+     --workstation "workstation-01"
+   ```
+
+**Advantages:**
+- Centralized control by TechOps
+- Supports per-workstation credentials for cost tracking
+- Standard VFX studio workflow (like MPC/Technicolor)
+
+---
+
+##### Scenario 3: Large Studios (Automation / Batch Deployment)
+
+**Best for:** Studios with 50+ workstations, any automation infrastructure (custom scripts, Ansible, Puppet, Group Policy, etc.)
+
+**How It Works:**
+BudgetGuard's `install_credentials.py` is designed to be **scriptable and non-interactive**, so it works with whatever automation your studio already uses. You don't need specific tools - any system that can:
+- Copy files to workstations
+- Run a Python command on each workstation
+- Handle batch execution
+
+**Common Approaches in VFX Studios:**
+
+**A. Custom Python/Bash Scripts** (Most Common)
+- TechOps writes a simple script that loops through workstations
+- Uses SSH (Linux) or RDP/PSExec (Windows) to run commands
+- No special tools required - just Python and network access
+
+**B. Windows Group Policy** (Windows Studios with Active Directory)
+- Group Policy is a Windows Active Directory feature (not related to Microsoft Dynamics)
+- Deploy batch script via Group Policy startup/login script
+- Files stored on network share
+- Runs automatically when workstations boot/login
+- Requires Windows Server with Active Directory domain
+
+**C. Ansible/Puppet** (If Already in Use)
+- If your studio already uses these tools, BudgetGuard integrates easily
+- If not, you don't need to install them - simpler scripts work fine
+
+**D. Custom Studio Tools** (Like MPC/Technicolor)
+- Many large studios have custom-built deployment systems
+- BudgetGuard's command-line interface works with any system
+
+**Workflow (Generic - Works with Any Tool):**
+1. **TechOps exports files** (on TechOps machine):
+   ```bash
+   python tools/export.py --config --credentials --out-dir ./exports --non-interactive
+   ```
+   This creates:
+   - `budgetguard_artists_config.json` (endpoints + credential status)
+   - `budgetguard_credentials.json` (actual credentials)
+
+2. **TechOps places files on network share** (accessible by all workstations):
+   - Network file server, shared drive, or automation tool's file server
+
+3. **TechOps creates deployment script** (using whatever tool your studio uses):
+   - Script loops through list of workstations
+   - For each workstation: copies files, runs `install_credentials.py`
+   - Can run sequentially or in parallel (depends on your tool)
+
+4. **TechOps runs deployment script**:
+   - Executes installation on all specified workstations
+   - Tool handles execution, error reporting, logging
+
+**Example 1: Simple Python Script (Most Common)**
+```python
+#!/usr/bin/env python3
+"""
+Deploy BudgetGuard credentials to all workstations.
+Works with any studio infrastructure - just needs SSH (Linux) or RDP/PSExec (Windows).
+"""
+import subprocess
+import sys
+
+# List of workstations (from your studio's inventory system)
+WORKSTATIONS = [
+    'workstation-01',
+    'workstation-02',
+    'workstation-03',
+    # ... etc
+]
+
+NETWORK_SHARE = '\\\\fileserver\\budgetguard'
+COMFYUI_PATH = 'C:\\ComfyUI'
+
+for ws in WORKSTATIONS:
+    print(f"Installing on {ws}...")
+    
+    # Run installation via SSH (Linux) or PSExec (Windows)
+    # Adjust command based on your studio's remote execution method
+    cmd = [
+        'python', 'tools/install_credentials.py',
+        '--comfyui-path', COMFYUI_PATH,
+        '--endpoints', f'{NETWORK_SHARE}/budgetguard_artists_config.json',
+        '--credentials', f'{NETWORK_SHARE}/budgetguard_credentials.json',
+        '--workstation', ws,
+        '--non-interactive'
+    ]
+    
+    # Example: Using SSH (Linux workstations)
+    # result = subprocess.run(['ssh', f'techops@{ws}'] + cmd, capture_output=True)
+    
+    # Example: Using PSExec (Windows workstations)
+    # result = subprocess.run(['psexec', f'\\\\{ws}'] + cmd, capture_output=True)
+    
+    # Example: If workstations can access network share directly
+    # result = subprocess.run(cmd, capture_output=True)
+    
+    print(f"  {ws}: {result.returncode == 0 and 'Success' or 'Failed'}")
+
+print("Deployment complete!")
 ```
 
-**Per-Workstation Credentials (for cost tracking):**
+**Example 2: Windows Batch Script (Group Policy)**
+```batch
+@echo off
+REM Deploy BudgetGuard credentials via Windows Group Policy
+REM Place this script on file server, deploy via Group Policy startup/login script
+
+set COMFYUI_PATH=C:\ComfyUI
+set NETWORK_SHARE=\\fileserver\budgetguard
+set ENDPOINTS=%NETWORK_SHARE%\budgetguard_artists_config.json
+set CREDENTIALS=%NETWORK_SHARE%\budgetguard_credentials.json
+
+python tools\install_credentials.py ^
+  --comfyui-path "%COMFYUI_PATH%" ^
+  --endpoints "%ENDPOINTS%" ^
+  --credentials "%CREDENTIALS%" ^
+  --workstation "%COMPUTERNAME%" ^
+  --non-interactive
+
+if %ERRORLEVEL% EQU 0 (
+    echo BudgetGuard credentials installed successfully
+) else (
+    echo BudgetGuard installation failed
+)
+```
+
+**Example 3: Bash Script (Linux Studios)**
 ```bash
-# Install credentials into ComfyUI for specific workstation
-python budgetguard_techops.py install-credentials --comfyui-path "C:\ComfyUI" --workstation "artist-workstation-01"
+#!/bin/bash
+# Deploy BudgetGuard credentials to all Linux workstations
+# Uses SSH to connect to each workstation
+
+WORKSTATIONS=("ws-01" "ws-02" "ws-03")  # Your workstation list
+NETWORK_SHARE="/mnt/fileserver/budgetguard"
+COMFYUI_PATH="/opt/ComfyUI"
+
+for ws in "${WORKSTATIONS[@]}"; do
+    echo "Installing on $ws..."
+    ssh "techops@$ws" python tools/install_credentials.py \
+        --comfyui-path "$COMFYUI_PATH" \
+        --endpoints "$NETWORK_SHARE/budgetguard_artists_config.json" \
+        --credentials "$NETWORK_SHARE/budgetguard_credentials.json" \
+        --workstation "$ws" \
+        --non-interactive
+    echo "  $ws: $([ $? -eq 0 ] && echo 'Success' || echo 'Failed')"
+done
+```
+
+**Example 4: Ansible (If Your Studio Uses It)**
+```yaml
+# budgetguard_install.yml
+- name: Install BudgetGuard credentials
+  hosts: artist_workstations
+  tasks:
+    - name: Install credentials
+      command: >
+        python tools/install_credentials.py
+        --comfyui-path "{{ comfyui_path }}"
+        --endpoints "{{ network_share }}/budgetguard_artists_config.json"
+        --credentials "{{ network_share }}/budgetguard_credentials.json"
+        --workstation "{{ inventory_hostname }}"
+        --non-interactive
+```
+
+**Note:** These are examples. Use whatever method your studio already uses for deploying software to workstations. BudgetGuard just needs to be able to run a Python command with file paths - it works with any deployment system.
+
+**Advantages:**
+- **Batch installation**: Install on all workstations at once (or in batches)
+- **Centralized control**: One script/command deploys to hundreds of workstations
+- **Consistent deployment**: Same process for all workstations
+- **Scales efficiently**: No manual per-workstation work required
+- **Works with existing tools**: No need to install new automation software
+
+**Key Point:**
+BudgetGuard doesn't require any specific automation tool. It's designed to work with:
+- Custom Python/Bash scripts (most common in VFX)
+- Windows Group Policy (Windows studios)
+- Ansible/Puppet (if already in use)
+- Custom studio deployment systems (like MPC/Technicolor's)
+- Any system that can copy files and run Python commands
+
+The `--non-interactive` flag ensures it works in automated environments without user prompts.
+
+---
+
+##### Quick Reference: Installation Command Options
+
+**Using exported files (recommended for all scenarios):**
+```bash
+python tools/install_credentials.py \
+  --comfyui-path "C:\ComfyUI" \
+  --endpoints endpoints.json \
+  --credentials credentials.json \
+  --studio-wide  # OR --workstation "workstation-id"
+```
+
+**Using ConfigManager (TechOps machine only):**
+```bash
+python tools/install_credentials.py \
+  --comfyui-path "C:\ComfyUI" \
+  --from-config-manager \
+  --studio-wide  # OR --workstation "workstation-id"
 ```
 
 This command:

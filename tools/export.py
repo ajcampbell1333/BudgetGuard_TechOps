@@ -2,8 +2,14 @@
 Export BudgetGuard data (config, endpoints, credentials, etc.)
 
 Usage:
+    # Export artist config (endpoints + credential status, no secrets)
     python tools/export.py --config --out path/to/budgetguard_artists_config.json
-    python tools/export.py --config  # Uses default output filename
+    
+    # Export credentials (contains secrets, for TechOps use only)
+    python tools/export.py --credentials --out path/to/credentials.json
+    
+    # Export both
+    python tools/export.py --config --credentials --out-dir ./exports
 """
 
 import argparse
@@ -111,15 +117,39 @@ def is_dummy_credentials(creds):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Export BudgetGuard data')
+    parser = argparse.ArgumentParser(
+        description='Export BudgetGuard data',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Export artist config (endpoints + credential status, safe to share)
+  python export.py --config --out endpoints.json
+
+  # Export credentials (contains secrets, for TechOps use only)
+  python export.py --credentials --out credentials.json
+
+  # Export both to a directory
+  python export.py --config --credentials --out-dir ./exports
+        """
+    )
     parser.add_argument(
         '--config',
         action='store_true',
-        help='Export artist config JSON (endpoints + credential status)'
+        help='Export artist config JSON (endpoints + credential status, no secrets)'
+    )
+    parser.add_argument(
+        '--credentials',
+        action='store_true',
+        help='Export credentials JSON (contains secrets, for TechOps use only)'
     )
     parser.add_argument(
         '--out',
-        help='Output path (default: budgetguard_artists_config.json in current directory, or tests/ if dummy credentials created)'
+        help='Output path for single export (use with --config OR --credentials, not both)'
+    )
+    parser.add_argument(
+        '--out-dir',
+        type=Path,
+        help='Output directory for multiple exports (use with --config AND --credentials)'
     )
     parser.add_argument(
         '--non-interactive',
@@ -128,13 +158,42 @@ def main():
     )
     args = parser.parse_args()
     
-    # For now, only --config is supported
-    if not args.config:
-        parser.error("Please specify what to export (e.g., --config). More export types coming soon.")
+    # Validate arguments
+    if not args.config and not args.credentials:
+        parser.error("Please specify what to export (--config and/or --credentials)")
     
-    # Set default output if not provided
-    if not args.out:
-        args.out = 'budgetguard_artists_config.json'
+    if args.config and args.credentials:
+        # Multiple exports - require --out-dir
+        if not args.out_dir:
+            parser.error("--out-dir is required when exporting both --config and --credentials")
+        if args.out:
+            parser.error("Use --out-dir when exporting multiple files, not --out")
+    else:
+        # Single export - require --out or use default
+        if args.out_dir:
+            parser.error("--out-dir is only used when exporting both --config and --credentials")
+    
+    # Set default output paths
+    if args.config and args.credentials:
+        # Multiple exports
+        out_dir = args.out_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        config_out = out_dir / 'budgetguard_artists_config.json'
+        creds_out = out_dir / 'budgetguard_credentials.json'
+    elif args.config:
+        # Single export: config
+        if args.out:
+            config_out = Path(args.out)
+        else:
+            config_out = Path('budgetguard_artists_config.json')
+        creds_out = None
+    else:
+        # Single export: credentials
+        if args.out:
+            creds_out = Path(args.out)
+        else:
+            creds_out = Path('budgetguard_credentials.json')
+        config_out = None
 
     cfg_mgr = ConfigManager()
     
@@ -159,46 +218,72 @@ def main():
         else:
             print("No credentials file found (non-interactive mode, skipping dummy creation)")
     
-    # If dummy credentials were created and output is just a filename (no path), save to tests/ directory
-    if dummy_created:
-        output_path = Path(args.out)
-        # Check if it's just a filename (no directory separators in the original string)
-        if '/' not in args.out and '\\' not in args.out and str(output_path.parent) == '.':
-            # Just a filename, no directory path - save to tests/ directory
+    # Handle dummy credentials for config export
+    if args.config and dummy_created:
+        # If dummy credentials were created and output is just a filename, save to tests/ directory
+        if config_out and str(config_out.parent) == '.':
             tests_dir = Path(__file__).parent.parent / 'tests'
             tests_dir.mkdir(exist_ok=True)
-            output_path = tests_dir / output_path.name
-            args.out = str(output_path)
+            config_out = tests_dir / config_out.name
     
-    # Build config - use dummy creds if created, otherwise use ConfigManager
-    if dummy_creds:
-        # Temporarily inject dummy credentials for export only
-        # Create a temporary config manager that uses dummy creds
-        class TempConfigManager:
-            def __init__(self, base_cfg_mgr, dummy_creds):
-                self.base = base_cfg_mgr
-                self._dummy_creds = dummy_creds
-                self.credentials_file = base_cfg_mgr.credentials_file
-                self.endpoints_file = base_cfg_mgr.endpoints_file
+    # Export config (endpoints + credential status, no secrets)
+    if args.config:
+        # Build config - use dummy creds if created, otherwise use ConfigManager
+        if dummy_creds:
+            # Temporarily inject dummy credentials for export only
+            class TempConfigManager:
+                def __init__(self, base_cfg_mgr, dummy_creds):
+                    self.base = base_cfg_mgr
+                    self._dummy_creds = dummy_creds
+                    self.credentials_file = base_cfg_mgr.credentials_file
+                    self.endpoints_file = base_cfg_mgr.endpoints_file
+                
+                def load_endpoints(self):
+                    return self.base.load_endpoints()
+                
+                def load_credentials(self):
+                    return self._dummy_creds
             
-            def load_endpoints(self):
-                return self.base.load_endpoints()
-            
-            def load_credentials(self):
-                return self._dummy_creds
+            temp_cfg_mgr = TempConfigManager(cfg_mgr, dummy_creds)
+            cfg = build_artist_config(temp_cfg_mgr)
+        else:
+            cfg = build_artist_config(cfg_mgr)
         
-        temp_cfg_mgr = TempConfigManager(cfg_mgr, dummy_creds)
-        cfg = build_artist_config(temp_cfg_mgr)
-    else:
-        cfg = build_artist_config(cfg_mgr)
-
-    with open(args.out, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, indent=2)
-
-    if dummy_created:
-        print(f'Wrote dummy config to {args.out}')
-    else:
-        print(f'Wrote Artists config to {args.out}')
+        with open(config_out, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=2)
+        
+        if dummy_created:
+            print(f'✓ Wrote dummy config to {config_out}')
+        else:
+            print(f'✓ Wrote Artists config to {config_out}')
+    
+    # Export credentials (contains secrets)
+    if args.credentials:
+        if not creds_exist and not dummy_created:
+            print("ERROR: No credentials found to export.")
+            if not args.non_interactive:
+                response = input("Generate dummy credentials for testing? (y/n): ").strip().lower()
+                if response == 'y':
+                    creds_to_export = create_dummy_credentials()
+                    print("WARNING: Exporting dummy credentials for testing only!")
+                else:
+                    print("Credential export cancelled.")
+                    sys.exit(1)
+            else:
+                print("Credential export cancelled (non-interactive mode).")
+                sys.exit(1)
+        else:
+            if dummy_created:
+                creds_to_export = dummy_creds
+                print("WARNING: Exporting dummy credentials for testing only!")
+            else:
+                creds_to_export = cfg_mgr.load_credentials()
+        
+        with open(creds_out, 'w', encoding='utf-8') as f:
+            json.dump(creds_to_export, f, indent=2)
+        
+        print(f'✓ Wrote credentials to {creds_out}')
+        print('  WARNING: This file contains secrets. Keep it secure and do not share publicly!')
 
 
 if __name__ == '__main__':

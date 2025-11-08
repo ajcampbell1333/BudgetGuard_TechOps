@@ -328,27 +328,71 @@ def create_deployment_tab(parent, config_manager, status_var, state_manager,
     def deploy_selected():
         """Deploy selected nodes to selected providers across ALL GPU tiers"""
         if deploy_local_only.get():
-            # Local-only mode
+            # Local-only mode: Create install package instead of deploying
             selected = []
             for node, var in local_only_checkboxes.items():
                 if var.get():
-                    selected.append(f"{node} → Local")
+                    selected.append(node)
             
             if not selected:
-                messagebox.showwarning("No Selection", "Please select at least one node for local deployment")
+                messagebox.showwarning("No Selection", "Please select at least one node for local install package creation")
                 return
             
-            msg = f"Create local install package for the following nodes?\n\n" + "\n".join(selected) + "\n\nThis will export Docker images and create an install package.\nInstall the package on each workstation using install-package command."
+            msg = f"Create local install package for the following nodes?\n\n" + "\n".join(selected) + "\n\nThis will export Docker images and create an install package ZIP file.\nInstall the package on each workstation using install-package command."
             if not messagebox.askyesno("Confirm Local Install Package Creation", msg):
                 return
             
-            status_var.set("Deploying...")
+            # Ask for output file location
+            from tkinter import filedialog
+            output_file = filedialog.asksaveasfilename(
+                defaultextension=".zip",
+                filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+                title="Save Install Package As",
+                initialfile="budgetguard-local-package.zip"
+            )
+            
+            if not output_file:
+                return  # User cancelled
+            
+            status_var.set("Creating install package...")
             parent.winfo_toplevel().update()
             
-            deployment_tasks = []
-            for node, var in local_only_checkboxes.items():
-                if var.get():
-                    deployment_tasks.append((node, "local", None))  # No GPU tier for local
+            # Create install package in background thread
+            def create_package():
+                try:
+                    from tools.create_install_package import create_install_package
+                    from pathlib import Path
+                    
+                    success = create_install_package(selected, Path(output_file))
+                    
+                    def update_ui():
+                        if success:
+                            messagebox.showinfo(
+                                "Package Created",
+                                f"Successfully created install package:\n{output_file}\n\n"
+                                f"Package includes {len(selected)} node(s):\n" + "\n".join(f"• {node}" for node in selected) +
+                                "\n\nInstall on workstations using:\n"
+                                f"python budgetguard_techops.py install-package --package {output_file}"
+                            )
+                            status_var.set(f"Created install package: {output_file}")
+                        else:
+                            messagebox.showerror("Package Creation Failed", 
+                                                f"Failed to create install package.\nCheck logs for details.")
+                            status_var.set("Package creation failed")
+                    
+                    root.after(0, update_ui)
+                except Exception as e:
+                    logger.error(f"Failed to create install package: {e}", exc_info=True)
+                    def show_error():
+                        messagebox.showerror("Error", f"Failed to create install package:\n{str(e)}")
+                        status_var.set("Package creation failed")
+                    root.after(0, show_error)
+            
+            root = parent.winfo_toplevel()
+            thread = threading.Thread(target=create_package)
+            thread.daemon = True
+            thread.start()
+            return  # Don't continue with normal deployment
         else:
             # Normal mode - collect deployments from ALL GPU tiers
             deployment_tasks = deployment_actions.collect_selected_deployments(

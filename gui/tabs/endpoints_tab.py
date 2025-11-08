@@ -77,8 +77,89 @@ def create_endpoints_tab(parent, config_manager):
             except Exception as e:
                 messagebox.showerror("Export Error", f"Failed to export: {str(e)}")
     
+    def export_artists_config():
+        """Export endpoints in Artists config format (for BudgetGuard Artists node)"""
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            title="Export Artists Config",
+            initialfile="budgetguard_artists_config.json"
+        )
+        if filename:
+            try:
+                from tools.export import build_artist_config
+                from pathlib import Path
+                
+                # Build artist config
+                artist_config = build_artist_config(config_manager)
+                
+                # Write to file
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(artist_config, f, indent=2)
+                
+                messagebox.showinfo(
+                    "Export Complete",
+                    f"Artists config exported to:\n{filename}\n\n"
+                    "This file contains endpoints and credential status (no secrets).\n"
+                    "Use with install-credentials command to install on workstations."
+                )
+            except Exception as e:
+                logger.error(f"Failed to export artists config: {e}", exc_info=True)
+                messagebox.showerror("Export Error", f"Failed to export artists config:\n{str(e)}")
+    
+    def share_endpoints():
+        """Share endpoints via clipboard in a formatted way"""
+        endpoints = config_manager.load_endpoints()
+        if not endpoints:
+            messagebox.showwarning("No Endpoints", "No endpoints to share")
+            return
+        
+        # Format endpoints for sharing
+        share_text = "BudgetGuard NIM Endpoints\n"
+        share_text += "=" * 50 + "\n\n"
+        
+        # Normalize endpoints
+        if isinstance(endpoints, dict):
+            endpoint_list = []
+            for key, value in endpoints.items():
+                if isinstance(value, list):
+                    endpoint_list.extend(value)
+                else:
+                    endpoint_list.append(value)
+        else:
+            endpoint_list = endpoints if isinstance(endpoints, list) else []
+        
+        # Group by node type
+        by_node = {}
+        for ep in endpoint_list:
+            node = ep.get('node_type') or ep.get('node') or 'Unknown'
+            provider = ep.get('provider') or 'Unknown'
+            url = ep.get('endpoint') or ep.get('url') or 'N/A'
+            gpu_tier = ep.get('gpu_tier', '')
+            
+            if node not in by_node:
+                by_node[node] = []
+            by_node[node].append({
+                'provider': provider,
+                'url': url,
+                'gpu_tier': gpu_tier
+            })
+        
+        # Format output
+        for node, providers in sorted(by_node.items()):
+            share_text += f"{node}:\n"
+            for p in providers:
+                gpu_str = f" ({p['gpu_tier'].upper()})" if p['gpu_tier'] else ""
+                share_text += f"  • {p['provider']}{gpu_str}: {p['url']}\n"
+            share_text += "\n"
+        
+        # Copy to clipboard
+        parent.winfo_toplevel().clipboard_clear()
+        parent.winfo_toplevel().clipboard_append(share_text)
+        messagebox.showinfo("Shared", "Endpoints copied to clipboard in formatted text!")
+    
     def refresh_endpoints():
-        """Refresh endpoint display"""
+        """Refresh endpoint display with formatted output"""
         endpoint_text.config(state=tk.NORMAL)
         endpoint_text.delete("1.0", tk.END)
         
@@ -88,7 +169,7 @@ def create_endpoints_tab(parent, config_manager):
             endpoint_text.insert(tk.END, "Deploy NIM instances using the Deployment Selection tab,\n")
             endpoint_text.insert(tk.END, "then endpoint URLs will appear here.")
         else:
-            # Ensure endpoints is a list
+            # Normalize endpoints
             if isinstance(endpoints, dict):
                 endpoints_list = []
                 for key, value in endpoints.items():
@@ -99,15 +180,53 @@ def create_endpoints_tab(parent, config_manager):
             else:
                 endpoints_list = endpoints if isinstance(endpoints, list) else []
             
-            text = json.dumps(endpoints_list, indent=2)
-            endpoint_text.insert(tk.END, text)
+            # Format for display (grouped by node type)
+            by_node = {}
+            for ep in endpoints_list:
+                node = ep.get('node_type') or ep.get('node') or 'Unknown'
+                provider = ep.get('provider') or 'Unknown'
+                url = ep.get('endpoint') or ep.get('url') or 'N/A'
+                gpu_tier = ep.get('gpu_tier', '')
+                
+                if node not in by_node:
+                    by_node[node] = []
+                by_node[node].append({
+                    'provider': provider,
+                    'url': url,
+                    'gpu_tier': gpu_tier
+                })
+            
+            # Display formatted
+            display_text = "Deployed NIM Endpoints\n"
+            display_text += "=" * 60 + "\n\n"
+            
+            for node, providers in sorted(by_node.items()):
+                display_text += f"📦 {node}\n"
+                display_text += "-" * 60 + "\n"
+                for p in providers:
+                    gpu_str = f" [{p['gpu_tier'].upper()}]" if p['gpu_tier'] else ""
+                    display_text += f"  {p['provider'].upper()}{gpu_str}:\n"
+                    display_text += f"    {p['url']}\n"
+                display_text += "\n"
+            
+            # Also show raw JSON in a collapsible section
+            display_text += "\n" + "=" * 60 + "\n"
+            display_text += "Raw JSON (for export/copy):\n"
+            display_text += "=" * 60 + "\n\n"
+            display_text += json.dumps(endpoints_list, indent=2)
+            
+            endpoint_text.insert(tk.END, display_text)
         
         endpoint_text.config(state=tk.DISABLED)
     
     ttk.Button(button_frame, text="Copy to Clipboard", 
               command=copy_endpoints).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Share Endpoints", 
+              command=share_endpoints).pack(side=tk.LEFT, padx=5)
     ttk.Button(button_frame, text="Export to JSON", 
               command=export_endpoints).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Export Artists Config", 
+              command=export_artists_config).pack(side=tk.LEFT, padx=5)
     ttk.Button(button_frame, text="Refresh", 
               command=refresh_endpoints).pack(side=tk.LEFT, padx=5)
     

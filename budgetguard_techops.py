@@ -66,6 +66,47 @@ def main():
     # List deployments command
     list_parser = subparsers.add_parser('list', help='List all deployments')
     
+    # Create install package command
+    package_parser = subparsers.add_parser('create-install-package', 
+                                          help='Create local install package for NIM nodes')
+    package_parser.add_argument(
+        '--nodes',
+        type=str,
+        required=True,
+        help='Comma-separated list of NIM node types (e.g., "FLUX Dev,FLUX Canny")'
+    )
+    package_parser.add_argument(
+        '--output',
+        type=Path,
+        required=True,
+        help='Output path for ZIP package'
+    )
+    package_parser.add_argument(
+        '--temp-dir',
+        type=Path,
+        help='Temporary directory for building package (optional)'
+    )
+    
+    # Install package command
+    install_pkg_parser = subparsers.add_parser('install-package',
+                                               help='Install local install package on workstation')
+    install_pkg_parser.add_argument(
+        '--package',
+        type=Path,
+        required=True,
+        help='Path to ZIP package file (created by create-install-package)'
+    )
+    install_pkg_parser.add_argument(
+        '--compose-dir',
+        type=Path,
+        help='Directory for Docker Compose configuration (default: ~/.budgetguard_local)'
+    )
+    install_pkg_parser.add_argument(
+        '--keep-extracted',
+        action='store_true',
+        help='Keep extracted files after installation (for debugging)'
+    )
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -97,6 +138,29 @@ def main():
         logger.info("Listing deployments...")
         # TODO: Implement list logic
         print("List functionality not yet implemented")
+    elif args.command == 'create-install-package':
+        logger.info(f"Creating install package: nodes={args.nodes}, output={args.output}")
+        from tools.create_install_package import create_install_package
+        node_types = [node.strip() for node in args.nodes.split(',')]
+        success = create_install_package(node_types, args.output, args.temp_dir)
+        if success:
+            print(f"✓ Successfully created install package: {args.output}")
+        else:
+            print(f"✗ Failed to create install package")
+            sys.exit(1)
+    elif args.command == 'install-package':
+        logger.info(f"Installing package: {args.package}")
+        from tools.install_package import install_package
+        success = install_package(
+            args.package,
+            compose_dir=args.compose_dir,
+            keep_extracted=args.keep_extracted
+        )
+        if success:
+            print(f"✓ Successfully installed package")
+        else:
+            print(f"✗ Failed to install package")
+            sys.exit(1)
     else:
         parser.print_help()
 
